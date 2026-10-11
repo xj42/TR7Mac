@@ -1,0 +1,6 @@
+.build/
+.swiftpm/
+dist/
+.DS_Store
+docs/app-tr7win-430-eng.exe
+docs/app-tr71a-72a-firm-120-all.exe
