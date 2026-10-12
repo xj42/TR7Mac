@@ -1,6 +1,7 @@
 #!/usr/bin/env swift
 import AppKit
 import Foundation
+import ImageIO
 
 // Original vector artwork. Run from the project root to regenerate the bundle icon.
 let root = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
@@ -29,6 +30,7 @@ func render(size: Int) -> Data {
     let context = NSGraphicsContext(bitmapImageRep: bitmap)!
     NSGraphicsContext.saveGraphicsState()
     NSGraphicsContext.current = context
+    context.cgContext.clear(CGRect(x: 0, y: 0, width: size, height: size))
     context.cgContext.scaleBy(x: CGFloat(size) / 1024, y: CGFloat(size) / 1024)
     let plate = NSBezierPath(roundedRect: NSRect(x: 96, y: 96, width: 832, height: 832), xRadius: 184, yRadius: 184)
     NSGraphicsContext.saveGraphicsState()
@@ -78,22 +80,59 @@ func render(size: Int) -> Data {
     return bitmap.representation(using: .png, properties: [:])!
 }
 
-// Modern ICNS elements contain PNG data, with big-endian container lengths.
-// Write the container directly so regeneration also works without iconutil services.
-func bigEndian(_ value: Int) -> Data {
-    var word = UInt32(value).bigEndian
-    return withUnsafeBytes(of: &word) { Data($0) }
+// Render the artwork once, then downsample it for small icon slots. Drawing the
+// detailed AppKit artwork directly at 16 or 32 pixels can produce damaged PNGs.
+let masterPNG = render(size: 1024)
+guard let source = CGImageSourceCreateWithData(masterPNG as CFData, nil),
+      let masterImage = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
+    throw NSError(domain: "TR7Icon", code: 2, userInfo: [NSLocalizedDescriptionKey: "The master icon could not be decoded."])
 }
-var elements = Data()
-for (type, size) in [("icp4", 16), ("icp5", 32), ("icp6", 64), ("ic07", 128),
-                     ("ic08", 256), ("ic09", 512), ("ic10", 1024),
-                     ("ic11", 32), ("ic12", 64), ("ic13", 256), ("ic14", 512)] {
-    let png = render(size: size)
-    elements.append(Data(type.utf8)); elements.append(bigEndian(png.count + 8)); elements.append(png)
-    if size == 1024 { try png.write(to: packaging.appendingPathComponent("TR7Mac.png")) }
+func resizedPNG(size: Int) throws -> Data {
+    if size == 1024 { return masterPNG }
+    guard let context = CGContext(data: nil, width: size, height: size,
+                                  bitsPerComponent: 8, bytesPerRow: size * 4,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+        throw NSError(domain: "TR7Icon", code: 3, userInfo: [NSLocalizedDescriptionKey: "Cannot create the \(size)-pixel icon context."])
+    }
+    context.interpolationQuality = .high
+    context.draw(masterImage, in: CGRect(x: 0, y: 0, width: size, height: size))
+    guard let image = context.makeImage() else {
+        throw NSError(domain: "TR7Icon", code: 4, userInfo: [NSLocalizedDescriptionKey: "Cannot render the \(size)-pixel icon."])
+    }
+    let output = NSMutableData()
+    guard let destination = CGImageDestinationCreateWithData(output, "public.png" as CFString, 1, nil) else {
+        throw NSError(domain: "TR7Icon", code: 5, userInfo: [NSLocalizedDescriptionKey: "Cannot encode the \(size)-pixel icon."])
+    }
+    CGImageDestinationAddImage(destination, image, nil)
+    guard CGImageDestinationFinalize(destination) else {
+        throw NSError(domain: "TR7Icon", code: 6, userInfo: [NSLocalizedDescriptionKey: "Cannot finish the \(size)-pixel icon."])
+    }
+    return output as Data
 }
-var icon = Data("icns".utf8); icon.append(bigEndian(elements.count + 8)); icon.append(elements)
-try icon.write(to: packaging.appendingPathComponent("TR7Mac.icns"))
+
+let temporary = FileManager.default.temporaryDirectory.appendingPathComponent("TR7Mac-icon-\(UUID().uuidString)")
+let iconset = temporary.appendingPathComponent("TR7Mac.iconset")
+let generated = temporary.appendingPathComponent("TR7Mac.icns")
+try FileManager.default.createDirectory(at: iconset, withIntermediateDirectories: true)
+defer { try? FileManager.default.removeItem(at: temporary) }
+for (filename, size) in [("icon_16x16.png", 16), ("icon_16x16@2x.png", 32),
+                         ("icon_32x32.png", 32), ("icon_32x32@2x.png", 64),
+                         ("icon_128x128.png", 128), ("icon_128x128@2x.png", 256),
+                         ("icon_256x256.png", 256), ("icon_256x256@2x.png", 512),
+                         ("icon_512x512.png", 512), ("icon_512x512@2x.png", 1024)] {
+    try resizedPNG(size: size).write(to: iconset.appendingPathComponent(filename))
+}
+let iconutil = Process()
+iconutil.executableURL = URL(fileURLWithPath: "/usr/bin/iconutil")
+iconutil.arguments = ["-c", "icns", iconset.path, "-o", generated.path]
+try iconutil.run()
+iconutil.waitUntilExit()
+guard iconutil.terminationStatus == 0 else {
+    throw NSError(domain: "TR7Icon", code: 7, userInfo: [NSLocalizedDescriptionKey: "iconutil could not package the iconset."])
+}
+try Data(contentsOf: generated).write(to: packaging.appendingPathComponent("TR7Mac.icns"), options: .atomic)
+try masterPNG.write(to: packaging.appendingPathComponent("TR7Mac.png"), options: .atomic)
 guard let loaded = NSImage(contentsOf: packaging.appendingPathComponent("TR7Mac.icns")), loaded.isValid else {
     throw NSError(domain: "TR7Icon", code: 1, userInfo: [NSLocalizedDescriptionKey: "The generated icon could not be decoded."])
 }

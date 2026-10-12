@@ -18,6 +18,7 @@ cp "$binary_dir/TR7Mac" "$app/Contents/MacOS/TR7Mac"
 cp "$binary_dir/tr7" dist/tr7
 cp Packaging/Info.plist "$app/Contents/Info.plist"
 cp Packaging/TR7Mac.icns "$app/Contents/Resources/TR7Mac.icns"
-codesign --force --sign - "$app"
+bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' Packaging/Info.plist)"
+codesign --force --sign - -r="designated => identifier \"$bundle_id\"" "$app"
 codesign --verify --strict "$app"
 echo "Built $PWD/$app"

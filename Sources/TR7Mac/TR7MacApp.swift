@@ -96,7 +96,7 @@ struct ContentView: View {
                 Spacer()
                 if model.connectionKind == "USB" { Button("Refresh Devices") { model.discover() }.disabled(model.busy) }
                 else { Button(bluetooth.scanning ? "Stop Scan" : "Scan Bluetooth") { if bluetooth.scanning { bluetooth.stop() } else { bluetooth.start() } }.disabled(model.busy) }
-                Button("Read Settings") { model.load() }.disabled(model.selectedPath.isEmpty || model.busy)
+                Button("Read Settings") { model.load() }.disabled(!model.selectionMatchesConnection || model.busy)
             }
             HStack {
                 Picker("Logger", selection: $model.selectedPath) {

@@ -57,7 +57,7 @@ The initial review's statement that recording, downloads, Wi-Fi, warning setting
 
 ### Transport and discovery
 
-Bluetooth requires the newer write/notify characteristic ending in `0008`. The older `0002`/`0003` interface uses a separate handshake and is explicitly rejected. Discovery accepts names starting with TR7, an advertised supported service UUID, or T&D manufacturer data (`0x0392`). A live scan of firmware 1.20 showed a customized name and manufacturer-encoded serial but no advertised command service UUID. The serial is shown in the picker when available. Automatic USB discovery covers VID `0x0CCF`, PID `0x0800`, not all Windows-supported families.
+Bluetooth requires the newer notify characteristic ending in `0008` and uses its advertised GATT write mode. A read-only GATT probe of firmware 1.20 found notify and write without response (`0x14`), which the transport now accepts. The older `0002`/`0003` interface uses a separate handshake and is explicitly rejected. Discovery accepts names starting with TR7, an advertised supported service UUID, or T&D manufacturer data (`0x0392`). A live scan of firmware 1.20 showed a customized name and manufacturer-encoded serial but no advertised command service UUID. The serial is shown in the picker when available. Automatic USB discovery covers VID `0x0CCF`, PID `0x0800`, not all Windows-supported families.
 
 ### Network and upload
 
@@ -75,7 +75,7 @@ Downloaded samples use recovered metadata and measurement conversion. Native arc
 | Physical USB reads | Firmware 1.20 settings/live values, names, logs, recordings, adjustment history, certificate state, and Wi-Fi scan pass |
 | Physical USB writes | Same-value destination, interval, timezone/SNTP, names, all three Wi-Fi profiles, warnings, reset timers, and clock writes pass readback; temporary certificate install/read/delete passes |
 | Physical network | Saved profile/destination connection test completes with `Operation succeeded` |
-| Physical Bluetooth | Four distinct advertisements captured; app discovery class accumulated all four in one live scan; GUI, GATT connection and commands not yet verified |
+| Physical Bluetooth | Four distinct advertisements captured; app discovery class accumulated all four in one live scan; read-only GATT connection confirmed `0008` properties; GUI read and GATT commands not yet verified |
 | Destructive/device-behavior acceptance | Recording start/stop, factory reset, clear actions, calibration writes while recording, warning notification behavior, and certificate-backed HTTPS delivery remain untested |
 | Visual/deployed | App builds and packages; interactive GUI acceptance remains untested |
 

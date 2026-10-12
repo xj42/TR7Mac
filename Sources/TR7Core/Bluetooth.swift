@@ -133,6 +133,7 @@ public final class BluetoothTransport: NSObject, LoggerTransport, CBCentralManag
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private var characteristic: CBCharacteristic?
+    private var writeType: CBCharacteristicWriteType = .withResponse
     private var closed = false
     private var connecting = false
     private var startupWrite = false
@@ -182,11 +183,16 @@ public final class BluetoothTransport: NSObject, LoggerTransport, CBCentralManag
     }
     private func sendNext() {
         guard let peripheral, let characteristic, pending != nil else { return }
-        guard offset < outbound.count else { finishIfReady(); return }
-        let end = min(offset + min(20, peripheral.maximumWriteValueLength(for: .withResponse)), outbound.count)
-        guard end > offset else { fail(TR7Error.transport("Bluetooth negotiated an invalid write size.")); return }
-        let chunk = outbound.subdata(in: offset..<end); offset = end; writeInFlight = true
-        peripheral.writeValue(chunk, for: characteristic, type: .withResponse)
+        while offset < outbound.count {
+            if writeType == .withoutResponse && !peripheral.canSendWriteWithoutResponse { return }
+            let end = min(offset + min(20, peripheral.maximumWriteValueLength(for: writeType)), outbound.count)
+            guard end > offset else { fail(TR7Error.transport("Bluetooth negotiated an invalid write size.")); return }
+            let chunk = outbound.subdata(in: offset..<end); offset = end
+            writeInFlight = writeType == .withResponse
+            peripheral.writeValue(chunk, for: characteristic, type: writeType)
+            if writeInFlight { return }
+        }
+        finishIfReady()
     }
     private func finishIfReady() {
         guard !writeInFlight, offset == outbound.count, let reply else { return }
@@ -224,18 +230,35 @@ public final class BluetoothTransport: NSObject, LoggerTransport, CBCentralManag
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
         if let error { fail(error); return }
         guard let command = service.characteristics?.first(where: { $0.uuid == BluetoothProtocol.command }),
-              command.properties.contains(.write), command.properties.contains(.notify) else {
+              command.properties.contains(.notify),
+              command.properties.contains(.write) || command.properties.contains(.writeWithoutResponse) else {
             fail(TR7Error.transport("This logger uses an older Bluetooth interface. Its handshake is not supported yet; use USB for this firmware.")); return
         }
-        characteristic = command; peripheral.setNotifyValue(true, for: command)
+        characteristic = command
+        writeType = command.properties.contains(.write) ? .withResponse : .withoutResponse
+        peripheral.setNotifyValue(true, for: command)
     }
     public func peripheral(_ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?) {
         if let error { fail(error) }
         else if characteristic.isNotifying {
             // BleDevice2::doBreak (0x1001D610) writes a single zero byte before unlock.
-            startupWrite = true; peripheral.writeValue(Data([0]), for: characteristic, type: .withResponse)
+            startupWrite = true
+            if writeType == .withResponse || peripheral.canSendWriteWithoutResponse {
+                sendStartupWrite(peripheral, characteristic: characteristic)
+            }
         }
         else { fail(TR7Error.transport("Bluetooth notifications could not be enabled.")) }
+    }
+    private func sendStartupWrite(_ peripheral: CBPeripheral, characteristic: CBCharacteristic) {
+        peripheral.writeValue(Data([0]), for: characteristic, type: writeType)
+        if writeType == .withoutResponse {
+            startupWrite = false
+            queue.asyncAfter(deadline: .now() + .milliseconds(50)) { [weak self] in self?.ready.finish(.success(())) }
+        }
+    }
+    public func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        if startupWrite, let characteristic { sendStartupWrite(peripheral, characteristic: characteristic) }
+        else { sendNext() }
     }
     public func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {
         if startupWrite {

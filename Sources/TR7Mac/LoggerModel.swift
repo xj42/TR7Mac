@@ -68,7 +68,16 @@ struct BluetoothLoggerChoice: Identifiable {
         var id: String { rawValue }
     }
     init() { reloadBluetoothRegistrations(); discover(); if devices.isEmpty { connectionKind = "Bluetooth" } }
-    var canEdit: Bool { full != nil && loadedPath == selectedPath && !busy }
+    var selectionMatchesConnection: Bool {
+        switch connectionKind {
+        case "USB": return devices.contains { $0.path == selectedPath }
+        case "Bluetooth":
+            guard selectedPath.hasPrefix("ble:"), let id = UUID(uuidString: String(selectedPath.dropFirst(4))) else { return false }
+            return bluetoothLoggerChoices.contains { $0.id == id }
+        default: return false
+        }
+    }
+    var canEdit: Bool { full != nil && loadedPath == selectedPath && selectionMatchesConnection && !busy }
     var timeZone: TimeZone { clockZone == "UTC" ? TimeZone(secondsFromGMT: 0)! : .current }
     var destinationChanged: Bool { guard let s = settings else { return false }; return address != s.address || Int(port) != Int(s.port) || destinationMode != s.destinationMode }
     var intervalChanged: Bool { guard let s = settings else { return false }; return regularUpload != s.uploadEnabled || interval != Int(s.intervalSeconds) }
@@ -160,13 +169,17 @@ struct BluetoothLoggerChoice: Identifiable {
     func clearLoaded() { full = nil; readings = nil; readingsAt = nil; client = nil; loadedPath = nil; failed = false; monitoring = false; networkDrafts = []; accessPoints = []; timers = []; warnings = nil; calibrationDraft = CalibrationDraft(); calibrationHistory = []; certificateInfo = nil; connectionTestEvents = []; logs = []; certificateDescription = "Read the certificate information from the logger." }
 
     func load() {
-        guard !selectedPath.isEmpty, !busy else { return }
+        guard !busy else { return }
+        guard selectionMatchesConnection else {
+            show(TR7Error.invalid("Select a logger for the chosen connection before reading settings.")); return
+        }
         let path = selectedPath, connection: SensorClient
-        if path.hasPrefix("ble:"), let identifier = UUID(uuidString: String(path.dropFirst(4))) {
+        if connectionKind == "Bluetooth", let identifier = UUID(uuidString: String(path.dropFirst(4))) {
             do { _ = try BluetoothProtocol.unlock(passcode: passcode) } catch { show(error); return }
             let code = passcode; bluetooth.stop()
             connection = SensorClient(transportFactory: { try BluetoothTransport(identifier: identifier, passcode: code) })
-        } else { connection = SensorClient(path: path) }
+        } else if connectionKind == "USB" { connection = SensorClient(path: path) }
+        else { show(TR7Error.invalid("Select a logger for the chosen connection before reading settings.")); return }
         clearLoaded(); busy = true; failed = false; message = "Reading logger settings and current measurements…"
         operationTask = Task {
             do {
