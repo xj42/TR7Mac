@@ -6,6 +6,7 @@ import TR7Core
 struct BluetoothLoggerChoice: Identifiable {
     let id: UUID
     let name: String
+    let serial: String?
     let rssi: Int?
 }
 
@@ -147,11 +148,11 @@ struct BluetoothLoggerChoice: Identifiable {
         var seen = Set<UUID>()
         let discovered = bluetooth.devices.compactMap { logger -> BluetoothLoggerChoice? in
             guard seen.insert(logger.id).inserted else { return nil }
-            return BluetoothLoggerChoice(id: logger.id, name: logger.name, rssi: logger.rssi)
+            return BluetoothLoggerChoice(id: logger.id, name: logger.name, serial: logger.serial, rssi: logger.rssi)
         }
         let saved = registeredBluetoothLoggers.compactMap { logger -> BluetoothLoggerChoice? in
             guard seen.insert(logger.id).inserted else { return nil }
-            return BluetoothLoggerChoice(id: logger.id, name: logger.name, rssi: nil)
+            return BluetoothLoggerChoice(id: logger.id, name: logger.name, serial: nil, rssi: nil)
         }
         return discovered + saved
     }

@@ -3,6 +3,15 @@ import TR7Core
 
 extension Checks {
     static func bluetoothRegistryChecks() throws {
+        let renamedLogger = Data([0x92, 0x03, 0x78, 0x56, 0x34, 0x12, 0x01])
+        try check(BluetoothProtocol.isTandDAdvertisement(renamedLogger), "T&D manufacturer data identifies a renamed logger without a service UUID")
+        try check(BluetoothProtocol.advertisedSerial(renamedLogger) == "12345678", "Advertised serial uses little-endian bytes")
+        try check(BluetoothProtocol.isTandDAdvertisement(Data([0x92, 0x03])) &&
+                  BluetoothProtocol.advertisedSerial(Data([0x92, 0x03])) == nil,
+                  "Short T&D advertisements are still recognized without inventing a serial")
+        try check(!BluetoothProtocol.isTandDAdvertisement(Data([0x4C, 0x00, 0x78, 0x56, 0x34, 0x12])) &&
+                  BluetoothProtocol.advertisedSerial(Data([0x4C, 0x00, 0x78, 0x56, 0x34, 0x12])) == nil,
+                  "Other manufacturers are excluded")
         let suite = "TR7Checks.bluetoothRegistry.\(UUID().uuidString)"
         guard let defaults = UserDefaults(suiteName: suite) else { throw CheckFailed(message: "Cannot create isolated Bluetooth registration preferences") }
         defer { defaults.removePersistentDomain(forName: suite) }

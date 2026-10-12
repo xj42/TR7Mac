@@ -30,6 +30,8 @@ USB serial: 38400 baud, 8 data bits, no parity, 1 stop bit, no flow control. The
 
 ## Bluetooth
 
+Firmware 1.20 was observed advertising configured device names and manufacturer data beginning with the little-endian T&D Bluetooth SIG company identifier `92 03`. The next four bytes encode the logger serial in little-endian order. One advertisement included Device Information service `180A`, but not the command service `6E400001…`; filtering scans by the command service or a `TR7` name misses such loggers. Across a continuous scan, four distinct loggers were observed. One initially arrived without a name and supplied it in a subsequent advertisement, so discovery accepts repeated reports and updates the displayed name. This is advertisement evidence only; a physical GATT command session remains unverified.
+
 `TdTR7BleCom.dll` stores the service and characteristic UUIDs at `0x1003D168` through `0x1003D398`:
 
 - Service: `6E400001-B5A3-F393-E0A9-E50E24DCCA42`.

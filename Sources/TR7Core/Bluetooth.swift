@@ -5,6 +5,7 @@ import Combine
 public struct BluetoothLogger: Identifiable, Equatable {
     public let id: UUID
     public let name: String
+    public let serial: String?
     public let rssi: Int
 }
 
@@ -12,6 +13,17 @@ public struct BluetoothLogger: Identifiable, Equatable {
 public enum BluetoothProtocol {
     public static let service = CBUUID(string: "6E400001-B5A3-F393-E0A9-E50E24DCCA42")
     public static let command = CBUUID(string: "6E400008-B5A3-F393-E0A9-E50E24DCCA42")
+    /// T&D Bluetooth SIG company identifier (0x0392), followed by a little-endian serial.
+    public static func isTandDAdvertisement(_ manufacturerData: Data?) -> Bool {
+        guard let manufacturerData, manufacturerData.count >= 2 else { return false }
+        return manufacturerData[0] == 0x92 && manufacturerData[1] == 0x03
+    }
+    public static func advertisedSerial(_ manufacturerData: Data?) -> String? {
+        guard isTandDAdvertisement(manufacturerData), let manufacturerData, manufacturerData.count >= 6 else { return nil }
+        let serial = UInt32(manufacturerData[2]) | UInt32(manufacturerData[3]) << 8 |
+            UInt32(manufacturerData[4]) << 16 | UInt32(manufacturerData[5]) << 24
+        return String(format: "%08X", serial)
+    }
     public static func wirePacket(_ packet: Packet) throws -> Packet {
         guard [UInt8(0x2D), 0x2E, 0x32, 0x33, 0x35, 0x36, 0x37, 0x38, 0x39,
                0x3D, 0x40, 0x41, 0x50, 0x52, 0x53, 0x55, 0x56, 0x6B, 0x6C,
@@ -43,7 +55,6 @@ public final class BluetoothDiscovery: NSObject, ObservableObject, CBCentralMana
     @Published public private(set) var scanning = false
     private var central: CBCentralManager?
     private var requested = false
-    private var expiry: DispatchWorkItem?
     public func start() {
         precondition(Thread.isMainThread)
         requested = true; devices = []; status = "Starting Bluetooth…"
@@ -52,7 +63,8 @@ public final class BluetoothDiscovery: NSObject, ObservableObject, CBCentralMana
     }
     public func stop() {
         precondition(Thread.isMainThread)
-        requested = false; expiry?.cancel(); expiry = nil; central?.stopScan(); scanning = false
+        requested = false; central?.stopScan(); scanning = false
+        status = devices.isEmpty ? "Scan stopped. No logger was found." : "Scan stopped. Select a logger, then read its settings."
     }
     public func centralManagerDidUpdateState(_ central: CBCentralManager) { beginIfReady() }
     private func beginIfReady() {
@@ -68,23 +80,33 @@ public final class BluetoothDiscovery: NSObject, ObservableObject, CBCentralMana
             return
         }
         guard requested else { return }
-        expiry?.cancel(); scanning = true; status = "Looking for nearby TR7 loggers…"
-        // Some firmware omits its service UUID from advertising; filter by device name too.
-        central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }; self.stop()
-            self.status = self.devices.isEmpty ? "No logger found. Move it nearby and check that its Bluetooth function is enabled." : "Select a logger, then read its settings."
-        }
-        expiry = work; DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: work)
+        scanning = true; status = "Looking for nearby TR7 loggers… Press Stop Scan when finished."
+        // Some firmware advertises only its configured name and T&D manufacturer data.
+        // Later scan responses can supply the configured name after an unnamed first packet.
+        central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: true])
     }
     public func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
-        let name = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? peripheral.name ?? ""
+        let name = (advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? peripheral.name ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         let normalized = name.uppercased().replacingOccurrences(of: "-", with: "")
         let services = advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []
-        guard normalized.hasPrefix("TR7") || services.contains(BluetoothProtocol.service) else { return }
-        let logger = BluetoothLogger(id: peripheral.identifier, name: name.isEmpty ? "TR7 Bluetooth logger" : name, rssi: RSSI.intValue)
-        if let index = devices.firstIndex(where: { $0.id == logger.id }) { devices[index] = logger }
-        else { devices.append(logger); devices.sort { $0.name < $1.name } }
+        let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
+        let index = devices.firstIndex(where: { $0.id == peripheral.identifier })
+        guard index != nil || normalized.hasPrefix("TR7") || services.contains(BluetoothProtocol.service) ||
+            BluetoothProtocol.isTandDAdvertisement(manufacturerData) else { return }
+        let previous = index.map { devices[$0] }
+        let logger = BluetoothLogger(id: peripheral.identifier,
+                                     name: name.isEmpty ? (previous?.name ?? "T&D Bluetooth logger") : name,
+                                     serial: BluetoothProtocol.advertisedSerial(manufacturerData) ?? previous?.serial,
+                                     rssi: RSSI.intValue)
+        if let index {
+            guard previous?.name != logger.name || previous?.serial != logger.serial ||
+                abs((previous?.rssi ?? logger.rssi) - logger.rssi) >= 10 else { return }
+            devices[index] = logger
+        } else {
+            devices.append(logger); devices.sort { $0.name < $1.name }
+        }
+        status = "Found \(devices.count) logger\(devices.count == 1 ? "" : "s"); scanning for more…"
     }
 }
 

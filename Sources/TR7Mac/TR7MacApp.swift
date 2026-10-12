@@ -105,7 +105,8 @@ struct ContentView: View {
                         ForEach(model.devices) { Text("\($0.name) · \($0.serial ?? $0.path)").tag($0.path) }
                     } else {
                         ForEach(model.bluetoothLoggerChoices, id: \.id) { logger in
-                            Text(logger.rssi.map { "\(logger.name) · \($0) dBm" } ?? "\(logger.name) · registered").tag("ble:" + logger.id.uuidString)
+                            Text([logger.name, logger.serial, logger.rssi.map { "\($0) dBm" } ?? "registered"]
+                                .compactMap { $0 }.joined(separator: " · ")).tag("ble:" + logger.id.uuidString)
                         }
                     }
                 }.disabled(model.busy)
