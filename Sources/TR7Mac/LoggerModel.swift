@@ -223,6 +223,7 @@ struct BluetoothLoggerChoice: Identifiable {
         pending = nil; busy = true; failed = false; monitoring = false; message = "Applying the confirmed change…"
         operationTask = Task {
             do {
+                var networkVerified = false
                 switch action {
                 case .destination: _ = try await client.setDestination(address: targetAddress, port: targetPort, mode: targetMode, expected: expected.basic)
                 case .interval: _ = try await client.setInterval(seconds: targetInterval, enabled: targetEnabled, expected: expected.basic)
@@ -245,6 +246,7 @@ struct BluetoothLoggerChoice: Identifiable {
                 case .network:
                     guard let profile, let old = expected.pages[profileIndex + 2] else { throw TR7Error.invalid("Network profile unavailable.") }
                     try await client.setNetwork(profile, number: profileIndex + 1, expected: old)
+                    networkVerified = true
                 case .warnings:
                     guard let targetWarnings, let old = expected.responses["warnings"] else { throw TR7Error.invalid("Warning settings unavailable.") }
                     try await client.setWarnings(targetWarnings, expected: old)
@@ -269,8 +271,18 @@ struct BluetoothLoggerChoice: Identifiable {
                 if action == .passcode && connectionKind == "Bluetooth" {
                     clearLoaded(); passcode = code; newPasscode = ""; message = "Passcode command acknowledged. Read the logger again using the new passcode."; busy = false; return
                 }
-                let result = try await client.readFull(); adopt(result)
-                newPasscode = ""; message = "Change acknowledged; refreshed \(result.basic.name)."
+                do {
+                    let result = try await client.readFull(); adopt(result)
+                    message = "Change acknowledged; refreshed \(result.basic.name)."
+                } catch {
+                    guard networkVerified else { throw error }
+                    clearLoaded()
+                    failed = true
+                    message = "Wi-Fi profile saved and verified, but refreshing the screen failed: \(error.localizedDescription) Read Settings again to reload the logger."
+                    busy = false
+                    return
+                }
+                newPasscode = ""
             } catch is CancellationError { message = "Operation cancelled. Read the logger again to check its current state." }
             catch { if action != .connectionTest { clearLoaded() }; show(error) }
             busy = false
